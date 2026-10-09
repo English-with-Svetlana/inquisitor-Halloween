@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Verify media identity, timing, asset hashes, and static HTTP serving."""
+from html.parser import HTMLParser
 import hashlib
 import http.server
 import json
@@ -35,9 +36,24 @@ for value in assets.values():
     path = root/value
     assert path.is_file() and value in html
     assert hashlib.sha256(path.read_bytes()).hexdigest()[:16] in path.name
-for setting in ['autoplay', 'muted', 'playsinline', 'object-fit: contain', 'overflow: hidden', 'background: #000']:
+for setting in ['autoplay', 'muted', 'playsinline', 'object-fit: contain', 'overflow: hidden', 'background: transparent']:
     assert setting in html
-assert 'controls' not in html and 'setTimeout' not in html
+class VideoAttributes(HTMLParser):
+    def handle_starttag(self, tag, attrs):
+        if tag == 'video':
+            self.attributes = dict(attrs)
+parser = VideoAttributes()
+parser.feed(html)
+assert 'controls' not in parser.attributes
+for key in ['autoplay', 'muted', 'playsinline']:
+    assert key in parser.attributes
+assert parser.attributes['preload'] == 'auto'
+assert 'video.controls = false' in html and 'setTimeout' not in html
+assert 'pointer-events: none' in html
+template = (root/'scripts/index.template.html').read_text()
+for key, value in assets.items():
+    template = template.replace('{{'+key+'}}', value)
+assert html == template
 class Handler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(root), **kwargs)
