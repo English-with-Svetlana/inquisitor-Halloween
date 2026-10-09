@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Video</title>
-<link rel="preload" as="image" href="assets/poster.aab5295c17334f6e.jpg">
+<link rel="preload" as="image" href="{{poster}}">
 <style>
   html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
   #transition { position: relative; width: 100%; height: 100%; }
@@ -16,8 +16,8 @@
 </head>
 <body>
 <div id="transition">
-  <img src="assets/poster.aab5295c17334f6e.jpg" alt="" fetchpriority="high">
-  <video autoplay muted playsinline preload="auto" poster="assets/poster.aab5295c17334f6e.jpg" disablepictureinpicture src="assets/transition.24a2c79c503013db.mp4"></video>
+  <img src="{{poster}}" alt="" fetchpriority="high">
+  <video autoplay muted playsinline preload="auto" poster="{{poster}}" disablepictureinpicture src="{{video}}"></video>
 </div>
 <script>
 (() => {
