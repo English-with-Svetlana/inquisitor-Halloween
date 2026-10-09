@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Losslessly prepare this edit-list-based MP4 and update hashed references."""
+"""Compress this edit-list-based MP4 without changing its presentation timing and update hashed references."""
 import hashlib
 import json
 from pathlib import Path
@@ -40,24 +40,86 @@ def video_track(data, moov):
     raise ValueError('No video track')
 
 def restore_timing(source, target):
-    # FFmpeg otherwise rounds/rebuilds this source's edit list. Restore the
-    # original movie time scale, track duration, and exact presentation window.
-    src, dst = source.read_bytes(), bytearray(target.read_bytes())
+    """Restore the original edit window and irregular final sample duration.
+
+    Rebuild the timing atom tree and shift chunk offsets if moov grows.
+    Encoding all frames with the edit list disabled preserves the hidden
+    preroll frames as well as the displayed animation.
+    """
+    src, dst = source.read_bytes(), target.read_bytes()
     sm, dm = child(src, (0, len(src)), b'moov'), child(dst, (0, len(dst)), b'moov')
     st, dt = video_track(src, sm), video_track(dst, dm)
-    for kind, parent_s, parent_d, offset, length in [
-        (b'mvhd', sm, dm, 12, 8), (b'tkhd', st, dt, 20, 4)]:
-        sa, _ = child(src, parent_s, kind)
-        da, _ = child(dst, parent_d, kind)
+    if sum(k == b'trak' for k, _, _ in atoms(dst, *dm)) != 1:
+        raise ValueError('Expected one silent video track')
+    replacements = {}
+    for kind, ps, pd in [(b'mvhd', sm, dm), (b'tkhd', st, dt)]:
+        sa, sb = child(src, ps, kind)
+        da, db = child(dst, pd, kind)
         if src[sa] != 0 or dst[da] != 0:
-            raise ValueError('Version 1 timing requires a workflow update')
-        dst[da+offset:da+offset+length] = src[sa+offset:sa+offset+length]
-    se = child(src, child(src, st, b'edts'), b'elst')
-    de = child(dst, child(dst, dt, b'edts'), b'elst')
-    if se[1]-se[0] != de[1]-de[0]:
-        raise ValueError('Edit-list structure changed')
-    dst[de[0]:de[1]] = src[se[0]:se[1]]
-    target.write_bytes(dst)
+            raise ValueError('Only version-0 timing is supported')
+        payload = bytearray(dst[da:db])
+        offset, count = (12, 8) if kind == b'mvhd' else (20, 4)
+        payload[offset:offset+count] = src[sa+offset:sa+offset+count]
+        replacements[kind] = bytes(payload)
+    for kind, ps, pd in [
+        (b'elst', child(src, st, b'edts'), child(dst, dt, b'edts')),
+        (b'mdhd', child(src, st, b'mdia'), child(dst, dt, b'mdia')),
+        (b'stts', child(src, child(src, child(src, st, b'mdia'), b'minf'), b'stbl'),
+         child(dst, child(dst, child(dst, dt, b'mdia'), b'minf'), b'stbl'))]:
+        sa, sb = child(src, ps, kind)
+        replacements[kind] = src[sa:sb]
+    containers = {b'moov', b'trak', b'edts', b'mdia', b'minf', b'stbl'}
+    def rebuild(data, span, shift):
+        result = bytearray()
+        for kind, a, b in atoms(data, *span):
+            payload = data[a:b]
+            if kind in containers:
+                payload = rebuild(data, (a, b), shift)
+            elif kind in replacements:
+                payload = replacements[kind]
+            elif kind in (b'stco', b'co64'):
+                payload = bytearray(payload)
+                count = struct.unpack_from('>I', payload, 4)[0]
+                width, fmt = (4, '>I') if kind == b'stco' else (8, '>Q')
+                for i in range(count):
+                    position = 8 + i * width
+                    value = struct.unpack_from(fmt, payload, position)[0]
+                    struct.pack_into(fmt, payload, position, value + shift)
+            result.extend(struct.pack('>I4s', len(payload)+8, kind)+payload)
+        return bytes(result)
+    original_size = dm[1]-dm[0]
+    shift = len(rebuild(dst, dm, 0))-original_size
+    moov = rebuild(dst, dm, shift)
+    # Encoder output is ordinary faststart MP4 with an 8-byte moov header.
+    target.write_bytes(dst[:dm[0]-8] + struct.pack('>I4s', len(moov)+8, b'moov')
+                       + moov + dst[dm[1]:])
+
+
+def validate_timing(source, target):
+    def probe(path):
+        return json.loads(run('ffprobe', '-v', 'error', '-show_streams',
+                              '-show_format', '-of', 'json', str(path)))
+    original, compressed = probe(source), probe(target)
+    a, b = original['streams'][0], compressed['streams'][0]
+    for key in ['width', 'height', 'sample_aspect_ratio', 'duration', 'nb_frames']:
+        if a[key] != b[key]:
+            raise ValueError(f'Compression changed {key}')
+    if len(compressed['streams']) != 1 or b['codec_type'] != 'video':
+        raise ValueError('Playback file must contain only video')
+    if original['format']['duration'] != compressed['format']['duration']:
+        raise ValueError('Presentation duration changed')
+    for ignore in [False, True]:
+        def frames(path):
+            command = ['ffprobe', '-v', 'error']
+            if ignore:
+                command += ['-ignore_editlist', '1']
+            command += ['-select_streams', 'v:0', '-show_frames', '-show_entries',
+                        'frame=pts,duration', '-of', 'json', str(path)]
+            data = json.loads(run(*command))['frames']
+            return [{key: frame[key] for key in ['pts', 'duration']} for frame in data]
+        if frames(source) != frames(target):
+            raise ValueError('Frame presentation timing changed')
+
 
 def publish(path, prefix, extension):
     data = path.read_bytes()
@@ -69,11 +131,16 @@ def main():
     source = ROOT / 'inquisitor.mp4'
     with tempfile.TemporaryDirectory() as temp:
         video, poster = Path(temp)/'video.mp4', Path(temp)/'poster.jpg'
-        run('ffmpeg', '-hide_banner', '-loglevel', 'error', '-i', str(source),
-            '-map', '0:v:0', '-an', '-c:v', 'copy', '-movflags', '+faststart', str(video))
+        run('ffmpeg', '-hide_banner', '-loglevel', 'error', '-ignore_editlist', '1', '-i', str(source),
+            '-map', '0:v:0', '-an', '-vf', 'setpts=PTS-STARTPTS',
+            '-c:v', 'libx264', '-preset', 'slow', '-crf', '24', '-pix_fmt', 'yuv420p',
+            '-bf', '3', '-x264-params', 'b-adapt=0', '-g', '48', '-keyint_min', '48',
+            '-sc_threshold', '0', '-fps_mode', 'passthrough', '-enc_time_base', '1:12288',
+            '-video_track_timescale', '12288', '-movflags', '+faststart', str(video))
         restore_timing(source, video)
+        validate_timing(source, video)
         # Full-resolution high-quality JPEG keeps the first-frame composition.
-        run('ffmpeg', '-hide_banner', '-loglevel', 'error', '-i', str(video),
+        run('ffmpeg', '-hide_banner', '-loglevel', 'error', '-i', str(source),
             '-frames:v', '1', '-c:v', 'mjpeg', '-q:v', '2', str(poster))
         assets = {'video': publish(video, 'transition', 'mp4'),
                   'poster': publish(poster, 'poster', 'jpg')}

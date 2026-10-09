@@ -4,28 +4,28 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Video</title>
-<link rel="preload" as="image" href="{{poster}}">
+<link rel="preload" as="image" href="{{poster}}" fetchpriority="high">
 <style>
-  html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: transparent; }
-  #transition { position: relative; width: 100%; height: 100%; }
+  html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
+  body { display: grid; place-items: center; }
+  #transition { position: relative; width: min(100vw, 177.777778vh); aspect-ratio: 16 / 9; }
   img, video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; object-position: center; }
-  img { display: block; }
-  video { opacity: 0; background: transparent; pointer-events: none; }
-  video.ready { opacity: 1; }
+  img, video { display: block; }
+  [hidden] { display: none; }
+  video { background: transparent; pointer-events: none; }
 </style>
 </head>
 <body>
 <div id="transition">
-  <img src="{{poster}}" alt="" fetchpriority="high">
+  <img hidden src="{{poster}}" alt="" fetchpriority="high">
   <video autoplay muted loop playsinline preload="auto" poster="{{poster}}" disablepictureinpicture src="{{video}}"></video>
 </div>
 <script>
 (() => {
   const video = document.querySelector('video');
+  const poster = document.querySelector('img');
   let failed = false;
-  let hidden = document.hidden;
-  let suspended = false;
-  let generation = 0;
+  let suspended = document.hidden;
   video.autoplay = true;
   video.loop = true;
   video.playsInline = true;
@@ -35,42 +35,29 @@
   video.defaultMuted = true;
   video.volume = 0;
   function fallback() {
-    generation++;
-    video.classList.remove('ready');
-  }
-  function reveal() {
-    const current = generation;
-    const show = () => {
-      if (current === generation && !failed && !document.hidden && video.readyState >= 2) {
-        video.classList.add('ready');
-      }
-    };
-    if ('requestVideoFrameCallback' in video) video.requestVideoFrameCallback(show);
-    else show();
+    video.hidden = true;
+    poster.hidden = false;
   }
   function play() {
-    if (failed || document.hidden) return;
+    if (failed || document.hidden || !video.paused) return;
+    video.hidden = false;
     try {
       const attempt = video.play();
       if (attempt) attempt.catch(() => { if (video.paused) fallback(); });
     } catch (_) { fallback(); }
   }
-  function restart() {
-    if (failed) return;
-    fallback();
-    try { video.currentTime = 0; } catch (_) { return; }
-    play();
-  }
-  video.addEventListener('playing', reveal);
+  // Use the browser's native poster lifecycle: no opacity or frame-callback gate.
+  video.addEventListener('playing', () => {
+    if (!failed) { video.hidden = false; poster.hidden = true; }
+  });
   video.addEventListener('error', () => { failed = true; fallback(); });
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden) { hidden = true; video.pause(); }
-    else if (hidden) { hidden = false; restart(); }
-  });
-  window.addEventListener('pagehide', () => { suspended = true; video.pause(); });
-  window.addEventListener('pageshow', () => {
-    if (suspended) { suspended = false; hidden = document.hidden; restart(); }
-  });
+  function hide() { suspended = true; video.pause(); }
+  function resume() {
+    if (suspended && !document.hidden) { suspended = false; play(); }
+  }
+  document.addEventListener('visibilitychange', () => document.hidden ? hide() : resume());
+  window.addEventListener('pagehide', hide);
+  window.addEventListener('pageshow', resume);
   play();
 })();
 </script>

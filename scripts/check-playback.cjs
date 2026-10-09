@@ -2,25 +2,29 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const code = fs.readFileSync('index.html', 'utf8').match(/<script>([\s\S]*?)<\/script>/)[1];
-function setup(reject = false) {
-  const events = {}, pageEvents = {}, classes = new Set();
-  let frames = [], plays = 0;
+function setup(reject = false, initiallyHidden = false) {
+  const events = {}, pageEvents = {};
+  let plays = 0, pauses = 0;
+  const poster = { hidden: true };
   const video = {
-    controls: true,
+    controls: true, hidden: false, paused: true, currentTime: 1,
     removeAttribute(name) { assert.equal(name, 'controls'); this.controls = false; },
-    paused: true, readyState: 3, currentTime: 1,
-    classList: { add: x => classes.add(x), remove: x => classes.delete(x) },
     addEventListener: (name, fn) => events[name] = fn,
-    requestVideoFrameCallback: fn => frames.push(fn),
-    play() { plays++; this.paused = reject; return reject ? Promise.reject(new Error('blocked')) : Promise.resolve(); },
-    pause() { this.paused = true; }
+    play() {
+      plays++;
+      this.paused = reject;
+      if (reject === 'throw') throw new Error('blocked');
+      return reject ? Promise.reject(new Error('blocked')) : Promise.resolve();
+    },
+    pause() { pauses++; this.paused = true; }
   };
-  const document = { hidden: false, querySelector: () => video,
+  const document = { hidden: initiallyHidden,
+    querySelector: name => name === 'video' ? video : poster,
     addEventListener: (name, fn) => pageEvents[name] = fn };
   const window = { addEventListener: (name, fn) => pageEvents[name] = fn };
   vm.runInNewContext(code, { document, window });
-  return { video, document, events, pageEvents, classes, plays: () => plays,
-    frame: () => { const batch = frames; frames = []; batch.forEach(fn => fn()); } };
+  return { video, poster, document, events, pageEvents,
+    plays: () => plays, pauses: () => pauses };
 }
 (async () => {
   let t = setup();
@@ -28,27 +32,35 @@ function setup(reject = false) {
   for (const key of ['autoplay', 'loop', 'muted', 'defaultMuted', 'playsInline']) assert.equal(t.video[key], true);
   assert.equal(t.video.controls, false);
   assert.equal(t.video.volume, 0);
-  assert.equal(t.classes.has('ready'), false);
-  t.events.playing(); t.frame(); assert(t.classes.has('ready'));
+  assert.equal(t.video.hidden, false); // Native poster works before playing.
+  t.events.playing();
+  assert.equal(t.poster.hidden, true);
+  assert.equal(t.video.hidden, false); // No frame callback can leave it invisible.
   t.pageEvents.pageshow(); assert.equal(t.plays(), 1);
-  // Dispatch a terminal event defensively: page logic must not stop playback,
-  // hide the video, or add controls. Browsers handle looping natively and
-  // normally do not dispatch ended when loop is enabled.
-  if (t.events.ended) t.events.ended();
-  assert.equal(t.video.paused, false);
-  assert(t.classes.has('ready'));
-  assert.equal(t.video.loop, true);
-  assert.equal(t.video.volume, 0);
-  assert.equal(t.plays(), 1);
-  t.document.hidden = true; t.pageEvents.visibilitychange(); assert(t.video.paused);
-  t.document.hidden = false; t.pageEvents.visibilitychange();
-  assert.equal(t.video.currentTime, 0); assert.equal(t.plays(), 2);
-  t.events.playing(); t.events.error(); t.frame(); assert(!t.classes.has('ready'));
+  assert.equal(t.events.ended, undefined); // Native loop has no JS end handler.
+  assert.equal(t.pauses(), 0);
   t.document.hidden = true; t.pageEvents.visibilitychange();
-  t.document.hidden = false; t.pageEvents.visibilitychange(); assert.equal(t.plays(), 2); assert.equal(t.video.controls, false);
-  t = setup(true); await new Promise(resolve => setImmediate(resolve));
-  assert(!t.classes.has('ready')); assert.equal(t.plays(), 1); assert.equal(t.video.controls, false);
+  assert.equal(t.pauses(), 1);
+  t.document.hidden = false; t.pageEvents.visibilitychange();
+  assert.equal(t.plays(), 2);
+  assert.equal(t.video.currentTime, 1); // Resume without seeking/reset flicker.
+  t.pageEvents.visibilitychange(); assert.equal(t.plays(), 2);
+  t.events.error(); t.events.playing();
+  assert.equal(t.poster.hidden, false);
+  assert.equal(t.video.hidden, true);
+  t.pageEvents.pagehide(); t.pageEvents.pageshow(); assert.equal(t.plays(), 2);
+  for (const rejection of [true, 'throw']) {
+    t = setup(rejection); await new Promise(resolve => setImmediate(resolve));
+    assert.equal(t.poster.hidden, false);
+    assert.equal(t.video.hidden, true);
+    assert.equal(t.video.controls, false);
+    assert.equal(t.plays(), 1);
+  }
+  t = setup(false, true); assert.equal(t.plays(), 0);
+  t.document.hidden = false; t.pageEvents.visibilitychange();
+  // Initial hidden state must be marked suspended to start on becoming visible.
+  assert.equal(t.plays(), 1);
   t = setup(); t.pageEvents.pagehide(); t.pageEvents.pageshow();
-  assert.equal(t.plays(), 2); assert.equal(t.video.currentTime, 0);
-  console.log('PASS: silent looping configuration, no stop/hide on terminal event, initial playback, first-frame reveal, rejected autoplay, media-error fallback, visibility replay, BFCache replay, and no duplicate initial pageshow playback (simulated events).');
+  assert.equal(t.plays(), 2);
+  console.log('PASS: silent native-loop configuration; immediate video/poster visibility; no end handler; rejected/thrown autoplay fallback; error fallback; visibility/BFCache resume; no resets or duplicate initial playback. Actual browser looping is not simulated.');
 })();
