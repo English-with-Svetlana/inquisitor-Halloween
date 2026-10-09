@@ -17,7 +17,7 @@
 <body>
 <div id="transition">
   <img src="{{poster}}" alt="" fetchpriority="high">
-  <video autoplay muted playsinline preload="auto" poster="{{poster}}" disablepictureinpicture src="{{video}}"></video>
+  <video autoplay muted loop playsinline preload="auto" poster="{{poster}}" disablepictureinpicture src="{{video}}"></video>
 </div>
 <script>
 (() => {
@@ -27,11 +27,13 @@
   let suspended = false;
   let generation = 0;
   video.autoplay = true;
+  video.loop = true;
   video.playsInline = true;
   video.controls = false;
   video.removeAttribute('controls');
   video.muted = true;
   video.defaultMuted = true;
+  video.volume = 0;
   function fallback() {
     generation++;
     video.classList.remove('ready');

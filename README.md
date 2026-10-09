@@ -44,7 +44,7 @@ HTML caching in Genially, the browser, or GitHub Pages can delay updated referen
 
 ## Playback and layout
 
-The page preloads the poster and requests the video immediately with muted autoplay, inline playback, and no controls. The poster stays beneath the video and the video is revealed after a presented-frame callback when supported; older browsers use the `playing` event. Failed loading or rejected autoplay returns to the poster without retry loops or visible loading UI. Playback ends naturally on its last frame; no hiding timer or loop is added.
+The page preloads the poster and requests the video immediately with muted autoplay, inline playback, and no controls. The poster stays beneath the video and the video is revealed after a presented-frame callback when supported; older browsers use the `playing` event. Failed loading or rejected autoplay returns to the poster without retry loops or visible loading UI. Native HTML looping repeats the 2.534017-second animation continuously while visible. No end-of-playback pause, hiding timer, or JavaScript loop timer is added.
 
 Both media elements fill the iframe using centered `object-fit: contain`. The original 16:9 composition fits arbitrary iframe dimensions without cropping or stretching. Unused iframe space is transparent, and video pointer interaction is disabled. Black pixels present in the original video remain unchanged. There are no margins, white backgrounds, or scrollbars. The original has no transparency.
 
@@ -52,7 +52,7 @@ The page pauses when the document becomes hidden and replays from the beginning 
 
 ## Verification
 
-`check.py` checks all 73 compressed video packet hashes and timestamps against the original, exact duration, resolution and aspect ratio, removed audio, faststart atom order, poster dimensions, hashed filenames, active asset references, playback/layout settings, and real HTTP responses from a temporary localhost server. `check-playback.cjs` checks playback logic with simulated events: first-frame reveal, rejected autoplay, errors, visibility replay, page restoration, and duplicate initial playback prevention. Re-running the optimizer produced identical hashes.
+`check.py` checks all 73 compressed video packet hashes and timestamps against the original, exact duration, resolution and aspect ratio, removed audio, faststart atom order, poster dimensions, hashed filenames, active asset references, playback/layout settings, and real HTTP responses from a temporary localhost server. `check-playback.cjs` checks playback logic with simulated events: silent looping configuration, no stop or hide handler at the end of playback, first-frame reveal, rejected autoplay, errors, visibility replay, page restoration, and duplicate initial playback prevention. These are simulated event checks, not proof of actual browser looping. Re-running the optimizer produced identical hashes.
 
 No browser was available in this session. Actual autoplay, rendered iframe layouts at multiple viewport sizes, perceptual poster matching, and real Genially behavior remain unverified. Layout settings were checked statically; playback events were simulated. Test the published page in Genially before relying on replay behavior.
 
@@ -60,6 +60,8 @@ No browser was available in this session. Actual autoplay, rendered iframe layou
 
 Embed the existing GitHub Pages **HTML page URL** in Genially's iframe/web-content embed, rather than linking to `inquisitor.mp4` or an `assets/*.mp4` file or using a video-player widget. A raw MP4 opens the browser or Genially media player, whose controls this page cannot disable. Keep the same public page URL. If iframe markup is supported, use the existing page URL as its `src` and include `allow="autoplay"`.
 
-The page explicitly assigns `autoplay = true`, `muted = true`, `defaultMuted = true`, `playsInline = true`, and `controls = false`, and removes the controls attribute. No failure handler enables controls or creates a Play button. Playback is requested as soon as the video and handlers exist. Rejected autoplay leaves the first-frame poster visible. Parent autoplay permissions and browser policy remain outside this page's control.
+The page explicitly assigns `autoplay = true`, `loop = true`, `volume = 0`, `muted = true`, `defaultMuted = true`, `playsInline = true`, and `controls = false`, and removes the controls attribute. No failure handler enables controls or creates a Play button. Playback is requested as soon as the video and handlers exist. Rejected autoplay leaves the first-frame poster visible. Parent autoplay permissions and browser policy remain outside this page's control.
 
 The local HTML already had no controls attribute or code enabling controls before this fix. The reported player UI may come from a raw-video embed, a Genially video widget, or cached older HTML. The Genially presentation was not accessible for inspection here; verify its embed targets the HTML page after you publish. No media was re-encoded or recompressed for this fix.
+
+The active hashed MP4 contains no audio stream. The retained original `inquisitor.mp4` contains audio and is not used by this page. If sound persists after publication, verify that Genially loads the updated HTML page and is not playing the original MP4 or another slide audio source. The updated template preserves native loop, muted autoplay, inline playback, zero volume, and disabled controls on future rebuilds. Actual repeated playback over ten seconds requires a browser test; it has not been observed in this session.

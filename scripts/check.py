@@ -21,6 +21,7 @@ a, b = source['streams'][0], optimized['streams'][0]
 for key in ['codec_name', 'width', 'height', 'sample_aspect_ratio', 'duration', 'nb_frames']:
     assert a[key] == b[key], (key, a[key], b[key])
 assert len(optimized['streams']) == 1
+assert all(stream['codec_type'] != 'audio' for stream in optimized['streams'])
 assert optimized['format']['duration'] == source['format']['duration']
 assert int(optimized['format']['size']) < int(source['format']['size'])
 # Compare every compressed packet, presentation timestamp, and duration.
@@ -45,11 +46,14 @@ class VideoAttributes(HTMLParser):
 parser = VideoAttributes()
 parser.feed(html)
 assert 'controls' not in parser.attributes
-for key in ['autoplay', 'muted', 'playsinline']:
+for key in ['autoplay', 'muted', 'loop', 'playsinline']:
     assert key in parser.attributes
 assert parser.attributes['preload'] == 'auto'
+assert parser.attributes['src'] == assets['video']
+assert parser.attributes['poster'] == assets['poster']
 assert 'video.controls = false' in html and 'setTimeout' not in html
 assert 'pointer-events: none' in html
+assert 'video.loop = true' in html and 'video.volume = 0' in html
 template = (root/'scripts/index.template.html').read_text()
 for key, value in assets.items():
     template = template.replace('{{'+key+'}}', value)

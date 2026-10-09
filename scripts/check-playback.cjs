@@ -25,11 +25,21 @@ function setup(reject = false) {
 (async () => {
   let t = setup();
   assert.equal(t.plays(), 1);
-  for (const key of ['autoplay', 'muted', 'defaultMuted', 'playsInline']) assert.equal(t.video[key], true);
+  for (const key of ['autoplay', 'loop', 'muted', 'defaultMuted', 'playsInline']) assert.equal(t.video[key], true);
   assert.equal(t.video.controls, false);
+  assert.equal(t.video.volume, 0);
   assert.equal(t.classes.has('ready'), false);
   t.events.playing(); t.frame(); assert(t.classes.has('ready'));
   t.pageEvents.pageshow(); assert.equal(t.plays(), 1);
+  // Dispatch a terminal event defensively: page logic must not stop playback,
+  // hide the video, or add controls. Browsers handle looping natively and
+  // normally do not dispatch ended when loop is enabled.
+  if (t.events.ended) t.events.ended();
+  assert.equal(t.video.paused, false);
+  assert(t.classes.has('ready'));
+  assert.equal(t.video.loop, true);
+  assert.equal(t.video.volume, 0);
+  assert.equal(t.plays(), 1);
   t.document.hidden = true; t.pageEvents.visibilitychange(); assert(t.video.paused);
   t.document.hidden = false; t.pageEvents.visibilitychange();
   assert.equal(t.video.currentTime, 0); assert.equal(t.plays(), 2);
@@ -40,5 +50,5 @@ function setup(reject = false) {
   assert(!t.classes.has('ready')); assert.equal(t.plays(), 1); assert.equal(t.video.controls, false);
   t = setup(); t.pageEvents.pagehide(); t.pageEvents.pageshow();
   assert.equal(t.plays(), 2); assert.equal(t.video.currentTime, 0);
-  console.log('PASS: initial playback, first-frame reveal, rejected autoplay, media-error fallback, visibility replay, BFCache replay, and no duplicate initial pageshow playback (simulated events).');
+  console.log('PASS: silent looping configuration, no stop/hide on terminal event, initial playback, first-frame reveal, rejected autoplay, media-error fallback, visibility replay, BFCache replay, and no duplicate initial pageshow playback (simulated events).');
 })();
